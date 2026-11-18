@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" preserveAspectRatio="none">
+  <defs>
+    <g id="c">
+      <circle cx="300" cy="205" r="135"/>
+      <circle cx="450" cy="228" r="105"/>
+      <circle cx="350" cy="282" r="90"/>
+      <circle cx="230" cy="290" r="95"/>
+      <circle cx="132" cy="248" r="92"/>
+      <circle cx="100" cy="160" r="78"/>
+      <circle cx="200" cy="128" r="82"/>
+      <circle cx="330" cy="124" r="86"/>
+      <circle cx="450" cy="144" r="78"/>
+      <circle cx="504" cy="198" r="62"/>
+      <path d="M460 104 L556 12 L364 72 Z"/>
+    </g>
+    <mask id="k"><use href="#c" fill="#fff"/></mask>
+  </defs>
+  <use href="#c" fill="#0e0a16" stroke="#0e0a16" stroke-width="12" stroke-linejoin="round"/>
+  <use href="#c" fill="#d4d8e6"/>
+  <g mask="url(#k)"><use href="#c" fill="#fff" transform="translate(-6 -10)"/></g>
+</svg>
