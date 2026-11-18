@@ -541,16 +541,26 @@
   const snd = $('#snd');
   let muted = false;
   try { muted = localStorage.getItem('muted') === '1'; } catch (e) {}
+  const soundCue = $('#sound-cue');
   function paintSound() {
     snd.textContent = muted ? 'Unmute' : 'Mute';
+    soundCue.classList.toggle('done', Audio.on);
   }
   paintSound();
-  snd.addEventListener('click', () => {
-    muted = !muted;
-    try { localStorage.setItem('muted', muted ? '1' : '0'); } catch (e) {}
-    if (muted) Audio.disable();
-    else { Audio.enable(); Audio.click(); }
+  function setMuted(on) {
+    muted = on;
+    try { localStorage.setItem('muted', on ? '1' : '0'); } catch (e) {}
+    if (on) Audio.disable();
+    else Audio.enable().then(paintSound);
     paintSound();
+  }
+  snd.addEventListener('click', () => {
+    setMuted(!muted);
+    if (!muted) Audio.click();
+  });
+  soundCue.addEventListener('click', () => {
+    setMuted(false);
+    Audio.whoosh(0.8);
   });
 
   // Browsers only start audio after a click, tap or key press; scrolling does not count, and a touch
@@ -559,8 +569,9 @@
   const isGesture = e => e.type === 'keydown' || e.type === 'touchend' ||
     (e.type === 'pointerdown') === (e.pointerType === 'mouse');
   async function unlock(e) {
-    if (muted || e.target.closest?.('#snd') || !isGesture(e)) return;
+    if (muted || e.target.closest?.('#snd, #sound-cue') || !isGesture(e)) return;
     if (!(await Audio.enable())) return;
+    paintSound();
     for (const type of unlockOn) window.removeEventListener(type, unlock, true);
   }
   for (const type of unlockOn) window.addEventListener(type, unlock, true);

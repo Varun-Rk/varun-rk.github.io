@@ -117,11 +117,11 @@
     return pat;
   }
 
-  function burst(n, rOut, rIn, seed, jitter = 0.12) {
+  function burst(n, rOut, rIn, seed, jitter = 0.12, phase = boil) {
     const pts = [];
     for (let i = 0; i < n * 2; i++) {
       const a = (i / (n * 2)) * TAU;
-      const r = (i % 2 ? rIn : rOut) * (1 + (hash(seed + i * 1.93 + boil * 0.61) - 0.5) * jitter);
+      const r = (i % 2 ? rIn : rOut) * (1 + (hash(seed + i * 1.93 + phase * 0.61) - 0.5) * jitter);
       pts.push([Math.cos(a) * r, Math.sin(a) * r]);
     }
     return pts;
@@ -1489,8 +1489,12 @@
   const mirror = pts => pts.map(([x, y]) => [-x, y]);
   const SIDES = [pts => pts, mirror];
 
-  function jet(x, y, thrust, seed, lw) {
-    const flick = reduce ? 0.5 : hash(boil * 1.3 + seed);
+  // The ship is on screen the whole way, so it flickers smoothly every frame instead of boiling
+  // at the 8fps hand-drawn rate, which reads as stutter when everything else is slow.
+  const flicker = (time, seed) => 0.5 + 0.3 * Math.sin(time * 0.029 + seed * 1.7) + 0.2 * Math.sin(time * 0.047 + seed * 3.1);
+
+  function jet(x, y, thrust, seed, lw, time) {
+    const flick = reduce ? 0.5 : flicker(time, seed);
     ctx.save();
     ctx.translate(x, y);
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 0.5 * thrust);
@@ -1498,8 +1502,8 @@
     glow.addColorStop(1, 'rgba(255,120,40,0)');
     ctx.fillStyle = glow;
     ctx.fillRect(-0.6, -0.6, 1.2, 1.2);
-    shape([[-0.08, 0], [0, 0.1 + 0.32 * thrust * (0.8 + flick * 0.4)], [0.08, 0]], C.orange, lw * 0.8, 0.03, seed);
-    shape(burst(9, 0.13 + 0.06 * thrust * (0.7 + flick * 0.6), 0.085, seed + 10, 0.35), C.orange, lw * 0.8);
+    shape([[-0.08, 0], [0, 0.1 + 0.32 * thrust * (0.8 + flick * 0.4)], [0.08, 0]], C.orange, lw * 0.8);
+    shape(burst(9, 0.13 + 0.06 * thrust * (0.7 + flick * 0.6), 0.085, seed + 10, 0.35, 0), C.orange, lw * 0.8);
     disc(0, 0, 0.075, C.yellow);
     disc(0, 0, 0.04, '#fffbe8');
     ctx.restore();
@@ -1510,10 +1514,9 @@
     const shade = mix(C.hullShade, '#140e22', dark);
     const red = mix(C.red, '#5a2030', dark);
     const lw = clamp(s * 0.035, 2, 4.5) / s;
-    const wob = clamp(s * 0.012, 0.4, 1.6) / s;
     const halftone = dots('rgba(14,10,22,0.55)', 6, 1.6, s);
     const lit = phase => reduce || Math.sin(time * 0.006 + phase) > 0.2;
-    const ember = i => (reduce ? C.orange : `rgba(255,138,43,${0.55 + 0.45 * hash(boil + i)})`);
+    const ember = i => (reduce ? C.orange : `rgba(255,138,43,${0.55 + 0.45 * flicker(time, i)})`);
 
     ctx.save();
     ctx.translate(x, y);
@@ -1534,10 +1537,10 @@
 
     SIDES.forEach((f, i) => {
       const at = (px, py) => f([[px, py]])[0];
-      shape(f(FIN), hull, lw, wob, 21 + i);
+      shape(f(FIN), hull, lw);
       shape(f(FIN_CAP), red);
 
-      poly(f(WING), wob, 31 + i);
+      poly(f(WING));
       ctx.fillStyle = hull;
       ctx.fill();
       ctx.save();
@@ -1553,15 +1556,15 @@
       ctx.fillStyle = lit(i * 2.1) ? C.cyan : mix(C.cyan, C.ink, 0.55);
       ctx.fillRect(i ? 0.86 : -0.97, 0.13, 0.11, 0.07);
       ctx.restore();
-      poly(f(WING), wob, 31 + i);
+      poly(f(WING));
       ink(lw);
       if (lit(i * 1.5 + 0.8)) disc(...at(-1.08, -0.14), 0.035, i ? C.lime : C.red, lw * 0.7);
     });
 
-    shape(TAIL, hull, lw, wob, 41);
+    shape(TAIL, hull, lw);
     shape(TAIL_TIP, red);
 
-    poly(BODY, wob, 51);
+    poly(BODY);
     ctx.fillStyle = hull;
     ctx.fill();
     ctx.save();
@@ -1574,11 +1577,11 @@
     for (let rx = -0.38; rx <= 0.38; rx += 0.076) disc(rx, 0.035, 0.009, C.ink);
     for (const side of [-1, 1]) line(side * 0.37, 0.2, side * 0.33, 0.33, lw * 0.45);
     ctx.restore();
-    poly(BODY, wob, 51);
+    poly(BODY);
     ink(lw);
 
     SIDES.forEach((f, i) => {
-      shape(f(VENT), METAL, lw * 0.8, wob, 55 + i);
+      shape(f(VENT), METAL, lw * 0.8);
       const [[x0], [x1]] = f([[-0.315, 0], [-0.235, 0]]);
       line(x0, -0.1, x1, -0.1, lw * 0.6, ember(i * 2));
       line(x0, -0.06, x1, -0.06, lw * 0.6, ember(i * 2 + 1));
@@ -1619,7 +1622,7 @@
       }
     }
     if (lit(4.2)) disc(0, 0.29, 0.025, C.red, lw * 0.6);
-    ENGINES.forEach((nx, i) => jet(nx, ENGINE_Y, thrust, 61 + i, lw));
+    ENGINES.forEach((nx, i) => jet(nx, ENGINE_Y, thrust, 61 + i, lw, time));
     ctx.restore();
   }
 
