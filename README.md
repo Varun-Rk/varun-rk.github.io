@@ -3,11 +3,10 @@
 **Fly through my work, all the way to the Sun.**
 
 This is my portfolio, built as a comic-book space journey. You pilot a small ship from the
-cockpit to the Sun. Along the way, every project I've shipped turns up as an encounter in
+cockpit to the Sun. Along the way, every project I've built turns up as an encounter in
 deep space, and each one opens a comic page about the work.
 
-I'm an AI engineer in Pune, India. I build AI agents, computer vision and applied ML, and take
-them all the way to production.
+I'm an AI engineer in Pune, India. I build AI agents, computer vision and applied ML systems.
 
 ## How to fly
 
@@ -34,7 +33,7 @@ Six chapter cards crawl into the distance between the acts, from "The pilot" to 
 
 The missions come in three acts. First the agents, which answer, act on their own, then learn
 whether their advice worked. Then the data and ML products underneath. Last, the computer vision
-work where I learned to ship models to production.
+work where I learned to make models work on the factory floor.
 
 | # | Mission | Encounter | Result |
 |---|---|---|---|
@@ -52,7 +51,7 @@ it flows, and what's under the hood.
 
 ## Get in touch
 
-Have a project in mind? I'm always up for talking about agents, applied ML or hard data
+I'm always up for talking about agents, applied ML or hard data
 problems, whether it's a role, a project or just a question.
 
 - **Email:** [varunrk777@gmail.com](mailto:varunrk777@gmail.com)
