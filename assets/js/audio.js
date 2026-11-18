@@ -2,7 +2,7 @@
   'use strict';
 
   let ac = null;
-  let master, verb, windFilter, windGain, engineFilter, sunGain;
+  let master, verb, noise, windFilter, windGain, engineFilter, sunGain;
   let enabled = false;
 
   function noiseBuffer(seconds) {
@@ -12,24 +12,32 @@
     return buf;
   }
 
-  function impulse(seconds, decay) {
-    const len = ac.sampleRate * seconds;
+  function prepareReverb() {
+    const len = Math.round(ac.sampleRate * 3.4);
     const buf = ac.createBuffer(2, len, ac.sampleRate);
-    for (let c = 0; c < 2; c++) {
-      const d = buf.getChannelData(c);
-      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    const left = buf.getChannelData(0), right = buf.getChannelData(1);
+    let i = 0;
+    function fillChunk() {
+      const end = Math.min(i + 8192, len);
+      for (; i < end; i++) {
+        const gain = (1 - i / len) ** 2.6;
+        left[i] = (Math.random() * 2 - 1) * gain;
+        right[i] = (Math.random() * 2 - 1) * gain;
+      }
+      if (i < len) setTimeout(fillChunk, 0);
+      else verb.buffer = buf;
     }
-    return buf;
+    fillChunk();
   }
 
   function build() {
-    ac = new (window.AudioContext || window.webkitAudioContext)();
+    ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
     master = ac.createGain();
     master.gain.value = 0;
     master.connect(ac.destination);
 
     verb = ac.createConvolver();
-    verb.buffer = impulse(3.4, 2.6);
+    setTimeout(prepareReverb, 0);
     const verbOut = ac.createGain();
     verbOut.gain.value = 0.5;
     verb.connect(verbOut).connect(master);
@@ -56,7 +64,8 @@
     lfo.start();
 
     const wind = ac.createBufferSource();
-    wind.buffer = noiseBuffer(3);
+    noise = noiseBuffer(3);
+    wind.buffer = noise;
     wind.loop = true;
     windFilter = ac.createBiquadFilter();
     windFilter.type = 'bandpass';
@@ -105,7 +114,8 @@
 
   function noiseShot(t, { from, to, type = 'lowpass', peak, attack, release, wet = 0 }) {
     const src = ac.createBufferSource();
-    src.buffer = noiseBuffer(attack + release + 0.1);
+    src.buffer = noise;
+    src.loop = true;
     const f = ac.createBiquadFilter();
     f.type = type;
     f.frequency.setValueAtTime(from, t);
@@ -114,7 +124,7 @@
     env(g, t, peak, attack, release);
     src.connect(f).connect(g);
     send(g, wet);
-    src.start(t);
+    src.start(t, Math.random() * noise.duration);
     src.stop(t + attack + release + 0.1);
   }
 
@@ -131,25 +141,37 @@
     o.stop(t + attack + release + 0.05);
   }
 
-  const live = () => enabled && ac && ac.state === 'running';
+  // While the context is starting up, sounds are still scheduled: the clock is frozen, so they play
+  // the moment it runs instead of being dropped. The first click's sound would otherwise be lost.
+  let starting = false;
+  const live = () => enabled && ac && (ac.state === 'running' || starting);
 
   const VMAudio = {
-    get on() { return enabled; },
+    get on() { return live(); },
 
-    enable() {
+    async enable() {
       try {
         if (!ac) build();
-        if (ac.state === 'suspended') ac.resume();
         enabled = true;
         master.gain.cancelScheduledValues(now());
-        master.gain.setTargetAtTime(0.75, now(), 0.4);
-      } catch (e) { enabled = false; }
-      return enabled;
+        master.gain.setTargetAtTime(0.75, now(), 0.025);
+        if (ac.state !== 'running') {
+          starting = true;
+          await Promise.race([ac.resume(), new Promise(r => setTimeout(r, 1000))]);
+        }
+      } catch (e) {
+        enabled = false;
+      } finally {
+        starting = false;
+      }
+      return live();
     },
 
     disable() {
       enabled = false;
-      if (ac) master.gain.setTargetAtTime(0, now(), 0.15);
+      if (!ac) return;
+      master.gain.cancelScheduledValues(now());
+      master.gain.setTargetAtTime(0, now(), 0.15);
     },
 
     pause(hidden) {

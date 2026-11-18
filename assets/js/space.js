@@ -305,12 +305,17 @@
 
   /* ---------- stars ---------- */
 
+  const STAR_COLORS = [C.paper, C.cyan, C.mint];
+  // Stars are stroked in one path per colour and depth band rather than one stroke each.
+  const STAR_BANDS = 12;
+  const starPaths = [];
+
   function newStar(s, z) {
     s.x = (Math.random() * 2 - 1) * 1.1;
     s.y = (Math.random() * 2 - 1) * 1.1;
     s.z = z;
     const k = Math.random();
-    s.c = k < 0.82 ? C.paper : k < 0.91 ? C.cyan : C.mint;
+    s.c = k < 0.82 ? 0 : k < 0.91 ? 1 : 2;
     return s;
   }
 
@@ -324,7 +329,7 @@
     const f = Math.max(W, H) * 0.5;
     const move = reduce ? 0 : speed * dt * 0.00032;
     const tail = reduce ? 0 : clamp(Math.abs(speed) * 0.03, 0, 0.3) * Math.sign(speed);
-    ctx.lineCap = 'round';
+    starPaths.length = 0;
     for (const s of stars) {
       s.z -= move;
       if (s.z < 0.02) newStar(s, 1);
@@ -334,16 +339,23 @@
         if (move >= 0) newStar(s, 1);
         continue;
       }
+      const near = 1 - s.z;
+      if (near <= 0) continue;
       const tz = clamp(s.z + tail, 0.02, 1.3);
       const tx = vp.x + (s.x / tz) * f, ty = vp.y + (s.y / tz) * f;
-      ctx.globalAlpha = clamp((1 - s.z) * 1.5);
-      ctx.strokeStyle = s.c;
-      ctx.lineWidth = 0.6 + (1 - s.z) * 2.4;
-      ctx.beginPath();
-      ctx.moveTo(tx, ty);
-      ctx.lineTo(x + 0.01, y);
-      ctx.stroke();
+      const k = s.c * STAR_BANDS + Math.min(STAR_BANDS - 1, Math.floor(near * STAR_BANDS));
+      const path = starPaths[k] || (starPaths[k] = new Path2D());
+      path.moveTo(tx, ty);
+      path.lineTo(x + 0.01, y);
     }
+    ctx.lineCap = 'round';
+    starPaths.forEach((path, k) => {
+      const near = ((k % STAR_BANDS) + 0.5) / STAR_BANDS;
+      ctx.globalAlpha = clamp(near * 1.5);
+      ctx.strokeStyle = STAR_COLORS[Math.floor(k / STAR_BANDS)];
+      ctx.lineWidth = 0.6 + near * 2.4;
+      ctx.stroke(path);
+    });
     ctx.globalAlpha = 1;
   }
 

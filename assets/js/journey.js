@@ -6,6 +6,8 @@
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const clamp = (v, a = 0, b = 1) => (v < a ? a : v > b ? b : v);
   const lerp = (a, b, t) => a + (b - a) * t;
+  // Per-frame smoothing rates are tuned at 60fps; this keeps them the same at any frame rate.
+  const follow = (rate, dt) => 1 - Math.pow(1 - rate, dt / 16.67);
   const easeInOut = t => -(Math.cos(Math.PI * t) - 1) / 2;
   const easeOut = t => 1 - (1 - t) ** 3;
   const easeBack = t => 1 + 2.4 * (t - 1) ** 3 + 1.4 * (t - 1) ** 2;
@@ -62,6 +64,11 @@
 
   let vh = window.innerHeight;
   let maxScroll = 1;
+  // Everything on screen is pinned and driven from this eased copy of scrollY, so uneven wheel and
+  // trackpad deltas turn into steady motion.
+  const SCROLL_EASE_MS = 110;
+  let smoothY = window.scrollY;
+  let snap = true;
   let lastY = window.scrollY;
   let vel = 0;
   let lastT = 0;
@@ -113,6 +120,8 @@
     const start = root.querySelector('.stop-launch');
     const legs = [...root.querySelectorAll('.leg')].map(el => ({ el, stop: el.querySelector('.stop'), L: 0, on: false }));
     let total = 1, cur = 0, yA = 0, yB = 1, lastP = null, heading = null;
+    // getPointAtLength forces a layout, so the path is sampled once per layout and read from here.
+    let samples = [[0, 0], [0, 0]];
 
     const centre = el => {
       let x = el.offsetWidth / 2, y = el.offsetHeight / 2;
@@ -120,14 +129,22 @@
       return [x, y];
     };
 
+    function pointAt(L) {
+      const f = clamp(L / total) * (samples.length - 1);
+      const i = Math.min(samples.length - 2, Math.floor(f)), t = f - i;
+      return [lerp(samples[i][0], samples[i + 1][0], t), lerp(samples[i][1], samples[i + 1][1], t)];
+    }
+
     // Every segment runs downward, so the path is monotonic in y and can be searched by it.
     function lengthAtY(y) {
-      let lo = 0, hi = total;
-      for (let i = 0; i < 18; i++) {
-        const mid = (lo + hi) / 2;
-        if (todo.getPointAtLength(mid).y < y) lo = mid; else hi = mid;
+      let lo = 0, hi = samples.length - 1;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (samples[mid][1] < y) lo = mid; else hi = mid;
       }
-      return lo;
+      const y0 = samples[lo][1], y1 = samples[hi][1];
+      const t = y1 > y0 ? clamp((y - y0) / (y1 - y0)) : 0;
+      return ((lo + t) / (samples.length - 1)) * total;
     }
 
     function layout() {
@@ -150,6 +167,12 @@
       svg.setAttribute('height', root.offsetHeight);
       for (const r of roads) r.setAttribute('d', d);
       total = todo.getTotalLength() || 1;
+      const n = Math.max(2, Math.ceil(total / 3));
+      samples = [];
+      for (let i = 0; i <= n; i++) {
+        const q = todo.getPointAtLength((i / n) * total);
+        samples.push([q.x, q.y]);
+      }
       yA = pts[0][1];
       yB = pts[pts.length - 1][1];
       for (const l of legs) l.L = lengthAtY(centre(l.stop)[1]);
@@ -157,22 +180,22 @@
     }
 
     function angleAt(L) {
-      const a = todo.getPointAtLength(L), b = todo.getPointAtLength(Math.min(total, L + 3));
-      return Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI + 90;
+      const a = pointAt(L), b = pointAt(Math.min(total, L + 3));
+      return Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI + 90;
     }
 
-    function update() {
+    function update(dt) {
       if (st.p < -0.2 || st.p > 1.2) return;
       const target = lengthAtY(lerp(yA, yB, clamp((st.p - 0.12) / 0.66)));
       if (lastP === st.p && Math.abs(target - cur) < 0.5 && Math.abs((((heading - angleAt(cur)) % 360) + 540) % 360 - 180) < 0.5) return;
       const forward = target > cur;
       lastP = st.p;
-      cur = reduce ? target : lerp(cur, target, 0.2);
-      const a = todo.getPointAtLength(cur);
+      cur = reduce ? target : lerp(cur, target, follow(0.2, dt));
+      const [ax, ay] = pointAt(cur);
       const angle = angleAt(cur);
       if (heading === null || reduce) heading = angle;
-      else heading += (((angle - heading + 540) % 360) - 180) * 0.25;
-      ship.style.transform = `translate(${a.x.toFixed(1)}px, ${a.y.toFixed(1)}px) rotate(${heading.toFixed(1)}deg)`;
+      else heading += (((angle - heading + 540) % 360) - 180) * follow(0.25, dt);
+      ship.style.transform = `translate(${ax.toFixed(1)}px, ${ay.toFixed(1)}px) rotate(${heading.toFixed(1)}deg)`;
       done.style.strokeDasharray = `${cur.toFixed(1)} ${total}`;
       for (const l of legs) {
         const on = cur >= l.L - 24;
@@ -258,6 +281,15 @@
     }
   };
 
+  // DOM writes wait until the canvas has drawn: canvas text reads computed style, and a pending
+  // write would force a full style recalc in the middle of the frame.
+  const writes = [];
+  const write = fn => writes.push(fn);
+  function flushWrites() {
+    for (const fn of writes) fn();
+    writes.length = 0;
+  }
+
   function crawl(st) {
     const p = st.p;
     let op = p <= 0 || p >= 1 ? 0 : clamp(p / 0.06) * clamp((1 - p) / 0.1);
@@ -265,8 +297,11 @@
     const key = op ? `${op.toFixed(3)}|${p.toFixed(4)}` : '0';
     if (key !== st.key) {
       st.key = key;
-      st.frame.style.opacity = op;
-      st.frame.style.setProperty('--t', reduce ? 0 : clamp(p).toFixed(4));
+      const t = reduce ? 0 : clamp(p).toFixed(4);
+      write(() => {
+        st.frame.style.opacity = op;
+        st.frame.style.setProperty('--t', t);
+      });
     }
     return op;
   }
@@ -300,18 +335,22 @@
     const key = op ? `${op.toFixed(3)}|${scale.toFixed(4)}|${tx.toFixed(1)}|${ty.toFixed(1)}|${extra}|${filter}|${clip}` : '0';
     if (key !== st.key) {
       st.key = key;
-      st.frame.style.opacity = op;
-      st.frame.style.transformOrigin = origin;
-      st.frame.style.filter = op ? filter : '';
-      st.frame.style.clipPath = op ? clip : '';
-      st.frame.style.transform = op
+      const transform = op
         ? `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) scale(${scale.toFixed(4)}) rotate(${st.tilt}deg)${extra}`
         : 'translate3d(0, 0, 0) scale(.5)';
+      write(() => {
+        const s = st.frame.style;
+        s.opacity = op;
+        s.transformOrigin = origin;
+        s.filter = op ? filter : '';
+        s.clipPath = op ? clip : '';
+        s.transform = transform;
+      });
     }
     const live = op > 0.6;
     if (live !== st.live) {
       st.live = live;
-      st.el.classList.toggle('live', live);
+      write(() => st.el.classList.toggle('live', live));
     }
 
     const forward = st.p > st.prev;
@@ -319,7 +358,7 @@
       const on = p >= tr.at && p < tr.until && p > -0.5 && (p < 1 || st === last);
       if (on === tr.on) continue;
       tr.on = on;
-      tr.n.classList.toggle('on', on);
+      write(() => tr.n.classList.toggle('on', on));
       if (!on || !forward || !tr.sound) continue;
       if (tr.sound === 'talk') Audio.talk(tr.n.textContent.length);
       else if (Audio[tr.sound]) Audio[tr.sound](...(tr.n.dataset.count ? [Number(tr.n.dataset.count)] : []));
@@ -468,6 +507,7 @@
   function jumpTo(st, quiet) {
     if (!quiet) Audio.whoosh(0.9);
     state.warp = 1;
+    snap = true;
     window.scrollTo({ top: readPoint(st), behavior: 'instant' });
   }
 
@@ -513,11 +553,14 @@
     paintSound();
   });
 
-  // Browsers only start audio after a click, tap or key press; scrolling does not count.
-  const unlockOn = ['pointerdown', 'keydown', 'touchend'];
-  function unlock(e) {
-    if (muted || e.target.closest?.('#snd')) return;
-    if (!Audio.enable()) return;
+  // Browsers only start audio after a click, tap or key press; scrolling does not count, and a touch
+  // only counts once the finger lifts.
+  const unlockOn = ['pointerdown', 'pointerup', 'keydown', 'touchend'];
+  const isGesture = e => e.type === 'keydown' || e.type === 'touchend' ||
+    (e.type === 'pointerdown') === (e.pointerType === 'mouse');
+  async function unlock(e) {
+    if (muted || e.target.closest?.('#snd') || !isGesture(e)) return;
+    if (!(await Audio.enable())) return;
     for (const type of unlockOn) window.removeEventListener(type, unlock, true);
   }
   for (const type of unlockOn) window.addEventListener(type, unlock, true);
@@ -585,6 +628,7 @@
       layout();
       paintRouteFill();
       window.scrollTo(0, ratio * maxScroll);
+      snap = true;
     }, 150);
   });
 
@@ -593,16 +637,25 @@
   function tick(now) {
     const dt = Math.min(64, lastT ? now - lastT : 16);
     lastT = now;
-    const y = window.scrollY;
+    const scrollY = window.scrollY;
+    // A jump of several screens snaps instead of sweeping, so it doesn't fire every encounter on the way.
+    if (snap || reduce || Math.abs(scrollY - smoothY) > vh * 3) {
+      smoothY = scrollY;
+      snap = false;
+    } else {
+      smoothY += (scrollY - smoothY) * (1 - Math.exp(-dt / SCROLL_EASE_MS));
+      if (Math.abs(scrollY - smoothY) < 0.05) smoothY = scrollY;
+    }
+    const y = smoothY;
     const rawV = (y - lastY) / dt;
     lastY = y;
-    vel = lerp(vel, clamp(rawV, -12, 12), 0.15);
+    vel = lerp(vel, clamp(rawV, -12, 12), follow(0.15, dt));
 
     state.time = now;
     state.dt = dt;
     state.progress = clamp(y / maxScroll);
-    state.pointer.x = lerp(state.pointer.x, pointerTarget.x, 0.05);
-    state.pointer.y = lerp(state.pointer.y, pointerTarget.y, 0.05);
+    state.pointer.x = lerp(state.pointer.x, pointerTarget.x, follow(0.05, dt));
+    state.pointer.y = lerp(state.pointer.y, pointerTarget.y, follow(0.05, dt));
     state.shake *= Math.pow(0.0025, dt / 1000);
     state.flash *= Math.pow(0.0005, dt / 1000);
     state.warp *= Math.pow(0.08, dt / 1000);
@@ -623,12 +676,15 @@
       s.p = st.p;
       s.R = st.R;
     }
-    if (active) setCurrent(active);
 
-    state.slowmo = lerp(state.slowmo, slow, 0.06);
-    state.focus = lerp(state.focus, focus, 0.08);
+    state.slowmo = lerp(state.slowmo, slow, follow(0.06, dt));
+    state.focus = lerp(state.focus, focus, follow(0.08, dt));
     const cruise = 1.1 * (1 - state.slowmo * 0.92);
     state.speed = reduce ? 0 : clamp(cruise + vel * 3.2 * (1 - state.slowmo * 0.6) + state.warp * 6, -5, 9);
+
+    Space.render(state);
+    flushWrites();
+    if (active) setCurrent(active);
 
     const fill = state.progress.toFixed(4);
     const distance = (1 - state.progress).toFixed(2);
@@ -644,8 +700,7 @@
     Audio.flight(state.speed, state.slowmo);
     Audio.sun(last.type === 'sun' ? clamp(last.p / 0.6) : 0);
 
-    if (flight) flight.update();
-    Space.render(state);
+    if (flight) flight.update(dt);
     requestAnimationFrame(tick);
   }
 
@@ -653,7 +708,7 @@
     layout();
     const target = byId(decodeURIComponent(location.hash.slice(1)));
     if (target && target.i > 0) window.scrollTo(0, readPoint(target));
-    lastY = window.scrollY;
+    lastY = smoothY = window.scrollY;
     for (const st of stages) st.p = st.prev = progressOf(st, lastY);
     requestAnimationFrame(tick);
   }
